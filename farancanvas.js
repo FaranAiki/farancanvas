@@ -23,13 +23,13 @@
 			RawImage().toScreenFormat()
 			Array().repeat()
 	
-	Version 0.01, In development.
+	Version 0.011, In development.
 	
 	Note that these things are not fixed:
 		1. Z and Size Vector3 for Camera logic (do not use Z and Size of the camera).
 		2. Frame per Second for 60+ is not supported yet.
 		3. No animate or animation position for an object.
-		3. Canvas per pixel is not fixed
+		4. Collision!
 */
 
 // External types
@@ -93,11 +93,26 @@ Array.prototype.toVector3 = function() {
 		vector[axis[index]] = this[index];
 	}
 	return vector;
-};
+}; /* aliases */ Array.prototype.vect = Array.prototype.toVector3;
 
-Array.prototype.remove = function(value) {
-	return this.filter(key => key != value);
-};
+Array.prototype.remove = function (value) {
+	if (this.indexOf(value) != -1) {
+		this.splice(this.indexOf(value), 1);
+		return true;
+    } return false;
+}
+
+Array.prototype.isEqual	= function (arr) {
+	if (arr.length != this.length) return false;
+	for (let i = 0; i < this.length; i++) {
+		if (Array.isArray(arr[i]) || Array.isArray(this[i])) {
+			if (!arr[i].isEqual(this[i])) return false;
+		} else if (this[i] != arr[i]) {
+			return false;
+		}
+	}
+	return true;
+}
 
 Number.prototype.min0 = function () {
 	return (this > 0) ? this : 0;
@@ -142,6 +157,11 @@ class Vector3 {
 		return vect;
 	}
 	
+	// copy
+	copy() {
+		return new Vector3(this.x, this.y, this.z);
+	}
+	
 	// to format
 	toPerPixel() {
 		return new Vector3(this.x*canvas.perPixel.x, this.y*canvas.perPixel.y, this.z*canvas.perPixel.z);
@@ -161,6 +181,16 @@ class Vector3 {
 				return new Vector3(t.x, canvas.height-t.y-s.y);
 		}
 	}
+	
+	// return the fixed drawing if
+	toRotatedScreenFormat(size=new Vector3(0, 0, 0), isGUI=false, rotationCenter=new Vector3(0, 0, 0)) {
+		let vect = this.copy();
+		
+		vect.x += size.x/2 + rotationCenter.x;
+		vect.y += size.y/2 + rotationCenter.y;
+		
+		return vect.toScreenFormat();
+	}	
 }
 
 // define camera
@@ -255,7 +285,11 @@ class RawImage { // usage `new Sprite("player0.png", 1, 1, 1, 1)`
 		this.flip		= new Vector3(flipX, flipY, 0);
 		this.rotation	= new Vector3(0, 0, rotZ);
 		
+		// vector++
+		this.rotationCenter	= new Vector3(0, 0, 0);
+		
 		// collider
+		this.alreadyCollide		= false;
 		this.collideWithTag		= {};
 		this.collideWithClass	= {};
 		this.collideWith		= this.collideWithTag;
@@ -272,7 +306,8 @@ class RawImage { // usage `new Sprite("player0.png", 1, 1, 1, 1)`
 		// if sprite is a GUI sprite
 		this.isGUI			= false;
 		
-		// if stroke
+		// if stroke & fill
+		this.fill	= true;
 		this.stroke	= false;
 		
 		// boolean
@@ -313,6 +348,10 @@ class RawImage { // usage `new Sprite("player0.png", 1, 1, 1, 1)`
 	
 	toScreenFormat() {
 		return this.position.toScreenFormat(this.size, this.isGUI);
+	}
+	
+	toRotatedScreenFormat() {
+		return this.position.toRotatedScreenFormat(this.size, this.isGUI, this.rotationCenter);
 	}
 	
 	setOnClick(fn) {
@@ -367,6 +406,9 @@ class Square extends RawImage {
 		this.onClick	= () => 0;
 		this.color		= "#e6e6e6";
 		
+		// interval
+		this.interval.push(window.setInterval(() => SpriteCollisionDetector(this), 1000/fps));
+
 		// push to list
 		currentScene.squareList.push(this);
 	}
@@ -405,8 +447,8 @@ class Text extends RawImage {
 // Controller, need `window.setInterval`
 function RigidbodyController(rigid) {
 	for (let axis of ["x", "y", "z"]) {
-		rigid.position[axis] += rigid.velocity[axis]/fps;	
-		rigid.velocity[axis] += rigid.acceleration[axis]/fps;
+		rigid.position[axis] += rigid.velocity[axis]*parseInt(1000/fps)/1000;	
+		rigid.velocity[axis] += rigid.acceleration[axis]*parseInt(1000/fps)/1000;
 	}
 }
 
@@ -418,19 +460,10 @@ function AnimationController(sprite) {
 	}
 }
 
+
+// deprecated
 function SpriteCollisionDetector(current) {
-	for (let sprite of currentScene.spriteList) {
-		if (sprite.tag in current.collideWithTag &&
-			(current.position.x + current.collisionEnd.x >= sprite.position.x) && (current.position.x <= sprite.position.x + sprite.collisionEnd.x) &&
-			(current.position.y + current.collisionEnd.y >= sprite.position.y) && (current.position.y <= sprite.position.y + sprite.collisionEnd.y) &&
-			(current.position.z + current.collisionEnd.z >= sprite.position.z) && (current.position.z <= sprite.position.z + sprite.collisionEnd.z)
-		) {
-			try { current.collideWithTag[sprite.tag](sprite); } catch {}
-		}
-		if (false) {
-			// do thing -> class
-		}
-	}
+	// collision is not detected :)
 }
 
 // Scene management
@@ -453,8 +486,12 @@ function LoadScene (id="") {
 		}
 		
 		currentScene.audioList.forEach(function(audio) {
-			audio.pause()
+			audio.pause();
 		});
+		
+		currentScene.myInterval.forEach(function(interval) {
+			window.clearInterval(interval);
+		})
 		
 		currentScene.audio				= [];
 		currentScene.interval			= [];
@@ -488,7 +525,7 @@ function AddEventListener(type="", fn = () => 0) {
 	} catch {
 		currentScene.eventListener[type] = [fn];
 	}
-	document.addEventListener(type, fn);
+	window.addEventListener(type, fn);
 }
 
 function RemoveEventListener(type="", fn = () => 0) {
@@ -506,18 +543,25 @@ function KeyboardOnUp(fn) {
 	AddEventListener("keyup", fn);
 }
 
-// Color management, usage: col = LinearGradient([[0.5, "#ffffff"]])
+// Color management, usage: col = LinearGradient([["#ffffff", 0.5]])
 function LinearGradient(grads=[]) {
 	let gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
 	for (let grad of grads) {
-		gradient.addColorStop(grad[0].toString(), grad[1].toString());
+		gradient.addColorStop(parseInt(grad[1]), grad[0].toString());
 	}
 	return gradient;
 }
 
 // Define destroy
 function Destroy(obj) {
-	currentScene.spriteList	= currentScene.spriteList.remove(obj);
+	for (interval of obj.interval) {
+		window.clearInterval(interval);
+	}
+	
+	try { currentScene.rawImageList.remove(obj); } catch {}
+	try { currentScene.textList.remove(obj); } catch {}
+	try { currentScene.spriteList.remove(obj); } catch {}
+	try { currentScene.squareList.remove(obj); } catch {}
 }
 
 // Define start <-- actually not used, and update
@@ -527,6 +571,10 @@ function Start(fn) {
 
 function Update(fn) {
 	currentScene.myInterval.push(window.setInterval(fn, 1000/fps));
+}
+
+function PermanentUpdate(fn) {
+	window.myInterval.push(window.setInterval(fn, 1000/fps));
 }
 
 // Clear update
@@ -560,7 +608,11 @@ function Import(src) {
 	}
 }
 
-// Define canvas draw
+/*
+	Define canvas draw
+	use `toRotatedScreenFormat` to draw
+*/	
+	
 canvas.draw	= function() {
 	ctx.fillStyle = canvas.backcolor;
 	ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -569,12 +621,12 @@ canvas.draw	= function() {
 	for (sprite of currentScene.spriteList) {
 		try { if(!sprite.hidden && sprite.active) {
 			ctx.save();
-			ctx.translate(sprite.toScreenFormat().x, sprite.toScreenFormat().y)
+			ctx.translate(sprite.toRotatedScreenFormat().x, sprite.toRotatedScreenFormat().y)
 			ctx.rotate(sprite.rotation.z * Math.PI/180);
 			ctx.drawImage(
 				sprite.image, 
-				0,
-				0, 
+				-sprite.size.toPerPixel().x/2 - sprite.rotationCenter.toPerPixel().x,
+				-sprite.size.toPerPixel().y/2 - sprite.rotationCenter.toPerPixel().y, 
 				(sprite.size.x-Camera.position.z).min0()/Camera.size*canvas.perPixel.x, 
 				(sprite.size.y-Camera.position.z).min0()/Camera.size*canvas.perPixel.y
 			);
@@ -586,18 +638,18 @@ canvas.draw	= function() {
 	for (square of currentScene.squareList) {
 		try { if (!square.hidden && square.active) {
 			ctx.save();
-			ctx.translate(square.toScreenFormat().x, square.toScreenFormat().y);
+			ctx.translate(square.toRotatedScreenFormat().x, square.toRotatedScreenFormat().y);
 			ctx.rotate(square.rotation.z * Math.PI/180);
 			ctx.fillStyle = square.color;
-			if (!square.stroke) ctx.fillRect(
-				0, 
-				0, 
+			if (square.fill) ctx.fillRect(
+				-square.size.toPerPixel().x/2 - square.rotationCenter.toPerPixel().x, 
+				-square.size.toPerPixel().y/2 - square.rotationCenter.toPerPixel().y, 
 				(square.size.x-Camera.position.z).min0()/Camera.size*canvas.perPixel.x, 
 				(square.size.y-Camera.position.z).min0()/Camera.size*canvas.perPixel.y
 			);
-			else ctx.strokeRect(
-				0,
-				0,
+			if (square.stroke) ctx.strokeRect(
+				-square.size.toPerPixel().x/2 - square.rotationCenter.toPerPixel().x, 
+				-square.size.toPerPixel().y/2 - square.rotationCenter.toPerPixel().y,
 				(square.size.x-Camera.position.z).min0()/Camera.size*canvas.perPixel.x, 
 				(square.size.y-Camera.position.z).min0()/Camera.size*canvas.perPixel.y
 			)
@@ -634,9 +686,14 @@ canvas.setPosition = function(x=0, y=0, rel=false) {
 	canvas.style.right		= y+"px";
 }
 
-canvas.setRelativePixel	= function() {
-	canvas.perPixel.x = canvas.width/10;
-	canvas.perPixel.y = canvas.height/10;
+canvas.setRelativePixel	= function(rw=10, rh=10) {
+	canvas.perPixel.x = canvas.width/rw;
+	canvas.perPixel.y = canvas.height/rh;
+}
+
+canvas.setAbsolutePixel = function(perPixel = new Vector3(100, 100, 100)) {
+	window.clearInterval(window.interval[window.interval.length-1]);
+	canvas.perPixel = perPixel;
 }
 
 // Define canvas as Vector3
